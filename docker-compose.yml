@@ -1,0 +1,14 @@
+services:
+  retail-api:
+    build: .
+    ports:
+      - "5000:5000"
+    container_name: retail-container
+
+  insurance-api:
+    build:
+      context: ./insurance
+    ports:
+      - "5001:5001"
+    container_name: insurance-container-5001
+  

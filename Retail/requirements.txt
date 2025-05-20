@@ -1,0 +1,24 @@
+langchain
+PyPDF2
+python-dotenv
+streamlit
+openai
+faiss-cpu
+altair
+tiktoken
+langchain-community
+langchain-openai
+langchain_google_genai
+google-generativeai
+mysql-connector-python
+flask
+flask_cors
+flask-swagger-ui
+jwt
+
+# uncomment to use huggingface llms
+# huggingface-hub==0.14.1
+
+# uncomment to use instructor embeddings
+# InstructorEmbedding==1.0.1
+# sentence-transformers==2.2.2
