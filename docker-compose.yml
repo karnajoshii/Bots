@@ -11,4 +11,11 @@ services:
     ports:
       - "5001:5001"
     container_name: insurance-container-5001
+
+  tnl-api:
+    build:
+      context: ./tnl
+    ports:
+      - "5002:5002"
+    container_name: tnl-container
   

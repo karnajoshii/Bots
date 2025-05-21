@@ -1,0 +1,13 @@
+streamlit
+mysql-connector-python
+pandas
+openai
+requests>=2.31.0
+python-dotenv
+langchain
+langchain-openai
+langchain_community
+faiss-cpu
+Werkzeug
+Flask
+flask-cors
