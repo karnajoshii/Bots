@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify,json
 import re
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -50,6 +50,7 @@ class SessionState:
         self.last_sql_results = None
         self.last_sql_query = None
         self.last_intent = None
+        self.query = None
 
 def get_session_state(session_id):
     """Retrieve or create session state for a given session ID."""
@@ -224,12 +225,15 @@ def extract_product_name_llm(user_query, chat_history, session_id):
         api_key=os.getenv("OPENAI_API_KEY"),
         max_tokens=100
     )
-
-    # Format chat history
-    formatted_history = "".join(
-        f"Human: {m.content}\n" if isinstance(m, HumanMessage) 
-        else f"AI: {m.content}\n" for m in chat_history[-5:]
-    )
+    query_type = session_state.query
+    if query_type == "continue" :
+        # Format chat history
+        formatted_history = "".join(
+            f"Human: {m.content}\n" if isinstance(m, HumanMessage) 
+            else f"AI: {m.content}\n" for m in chat_history[-5:]
+        )
+    else : 
+        formatted_history = []
 
     # Define prompt for LLM
     prompt = ChatPromptTemplate.from_messages([
@@ -273,10 +277,16 @@ def extract_product_name_llm(user_query, chat_history, session_id):
 
 def generate_sql_query(session_id, user_query, chat_history, order_id=None, intent=None,product_name=None):
     """Generate SQL query based on user query."""
-    formatted_history = "".join(
-        f"Human: {m.content}\n" if isinstance(m, HumanMessage) 
-        else f"AI: {m.content}\n" for m in chat_history[-5:]
-    )
+
+    session_state = get_session_state(session_id)
+    query_type = session_state.query
+    if query_type == "continue":
+        formatted_history = "".join(
+            f"Human: {m.content}\n" if isinstance(m, HumanMessage) 
+            else f"AI: {m.content}\n" for m in chat_history[-5:]
+        )
+    else :
+        formatted_history = []
     print(formatted_history)
     session_state = get_session_state(session_id)
     llm = ChatOpenAI(
@@ -702,7 +712,7 @@ def query_sql_database(session_id, user_query, chat_history, order_id=None, inte
 def detect_intent(session_id, question, chat_history):
     """Detect the intent of the user's question."""
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
+        model="gpt-4o",
         temperature=0,
         api_key=os.getenv("OPENAI_API_KEY"),
     )
@@ -713,41 +723,85 @@ def detect_intent(session_id, question, chat_history):
     )
 
     input_string = f"""
-You are an intent classifier for a retail assistant. Classify the intent of the user's question into one of the following:
-- greeting
-- capability_inquiry
-- product_inquiry
-- order_inquiry
-- return_inquiry
-- warranty_inquiry
-- shipping_inquiry
-- general_inquiry
-- count_inquiry
-- installation_inquiry
-- best
-- return_date
-- warranty_date
-
-Rules:
-- Greetings ('hi', 'hello') → 'greeting'
-- Questions about assistant capabilities → 'capability_inquiry'
-- CRITICAL : NEVER consider vague queries (e.g. Give me details of product,Give me the products or similar to that) in 'product_inquiry'
-- Specific product/sub-category queries ('TV', 'laptop','apple') → 'product_inquiry'.If vague queries (e.g. Give me details of product,Give me the products or similar to that) → 'general_inquiry'
-- Order-related queries ('order', 'delivery') → 'order_inquiry'
-- If query id realated to return and there is any date mentioned (in any format like 15th March, 15th of March, 15-03, 15-03-2024) in user query or in context to query consider it as return_date, while consider other return queries as return_inquiry
-- If query id realated to warranty and there is any date mentioned (in any format like 15th March, 15th of March, 15-03, 15-03-2024) in user query or in context to query consider it as warranty_date, while consider other return queries as warranty_inquiry.
-- Shipping/delivery (non-order specific) → 'shipping_inquiry'
-- Count queries → 'count_inquiry'
-- Installation queries → 'installation_inquiry'
-- Best product queries → 'best'
-- Others or vague queries (e.g. Give me details of product,What do you sell,Give me the products or similar to that) → 'general_inquiry'
-- CRITICAL: Just return the intent, nothing else. For example, if the intent classified is "greeting" then just return greeting.
-- CRITICAL :REMINDER: Return **only the intent label** exactly as shown.
-
-Chat History:
-{formatted_history}
-
-User Question: {question}
+You are a strict intent and context classifier for a retail virtual assistant.
+ 
+    Your task is to analyze the user's message and determine:
+    1. The user's intent
+    2. Whether the message is a new query or a continuation of the previous conversation
+ 
+ 
+    You must always return your result in this exact JSON format:
+    {{
+    "intent": "intent_label",
+    "query_type": "new_query"  // or "continue"
+    }}
+ 
+    INTENT LABELS:
+    - greeting  
+    - capability_inquiry  
+    - product_inquiry  
+    - order_inquiry  
+    - return_inquiry  
+    - warranty_inquiry  
+    - general_inquiry  
+    - best  
+    - return_date  
+    - warranty_date  
+ 
+    ---
+ 
+    RULES:
+ 
+    Intent classification:
+    - "hi", "hello" → `greeting` else goodbye, how are you, → `general_inquiry`
+    - If the user asks what you can do → `capability_inquiry`
+    - If the user asks for a specific product, brand, or sub-category (e.g., "Samsung TV", "laptop") → `product_inquiry`
+    - If the query is vague like “give me products”, “what do you sell”, “show me items” → `general_inquiry`
+    - If it's about an order or delivery status/tracking → `order_inquiry`
+    - If it's about a return period and includes a date → `return_date`  
+    - If it's about a return period without a date → `return_inquiry`
+    - If it's about warranty period and includes a date → `warranty_date`
+    - If it's about warranty period without a date → `warranty_inquiry`
+    - If it's asking for the best product → `best`
+    - CRITICAL : Do NOT classify as `product_inquiry` if the user is:
+        - Comparing brands or technologies (e.g., “What’s better, LG or Samsung?”)
+        - Asking general or abstract questions about products
+        → In such cases, classify as `general_inquiry` (or `general_inquiry` if unclear)
+ 
+    Only classify queries as in-scope if they relate directly to:
+    - Exploring products by brand, subcategory, or price
+    - Getting product specifications or pricing
+    - Understanding return or warranty period
+    - Checking return eligibility using purchase date
+    - Tracking order status using an order ID
+ 
+    If a query is too vague, too complex, or outside the assistant’s supported capabilities — even if retail-related — classify it as `general_inquiry`
+ 
+    Query type classification:
+    - `new_query` → The message is fully understandable on its own and does not refer to earlier messages
+    - `continue` → The message relies on a previous message or refers to a previous product/order (e.g., "Can I return it?", "Does it have warranty?", "That one")
+ 
+    NEVER guess.
+    NEVER invent a product, order, or date.
+    ALWAYS follow these rules strictly.
+    ONLY return the JSON. Do not include any explanation or notes.
+ 
+    
+ 
+    
+    Chat history:
+    {formatted_history}
+ 
+    Current user message:
+    {question}
+ 
+    ---
+ 
+    Now classify this message by returning only the intent and query_type in JSON format like:
+    {{
+    "intent": "intent_label",
+    "query_type": "new_query"  // or "continue"
+    }}
 """
 
     prompt = ChatPromptTemplate.from_messages([
@@ -758,9 +812,14 @@ User Question: {question}
     try:
         formatted_prompt = prompt.format(input=input_string)
         response = llm.invoke(formatted_prompt)
-        intent = response.content.strip().lower()
-        print(f"Detected intent: {intent}")
-        return intent
+        clean = re.sub(r"```json|```", "", response.content).strip()
+        
+        # Parse the cleaned JSON
+        data = json.loads(clean)
+        intent = data.get("intent")
+        query_type = data.get("query_type")
+        print(f"INTENT : {intent},{query_type}")
+        return intent,query_type
     except Exception as e:
         print(f"Intent detection error: {e}")
         return "general_inquiry"
@@ -818,8 +877,8 @@ def get_greeting_response():
 **Hi there! I’m AIRA** — here to help you quickly find product information, understand return and warranty policies, and track your orders.\n
 **Here’s what I can assist you with:**\n
 • Explore products by brand, subcategory, and price\n
-• Provide detailed product information including specifications and pricing\n
-• Explain return and warranty policies for any product\n
+• Provide product information including specifications and pricing\n
+• Explain return and warranty period for any product\n
 • Check return eligibility based on your purchase date\n
 • Track your order status using your order ID\n
 \n
@@ -836,14 +895,14 @@ def get_greeting_response():
 
 def get_capability_response():
     """Generate a capability response."""
-    return """**Hi there! I’m AIRA** — here to help you quickly find product information, understand return and warranty policies, and track your orders.\n
+    return """
 **Here’s what I can assist you with:**\n
 • Explore products by brand, subcategory, and price\n
-• Provide detailed product information including specifications and pricing\n
-• Explain return and warranty policies for any product\n
+• Provide product information including specifications and pricing\n
+• Explain return and warranty period for any product\n
 • Check return eligibility based on your purchase date\n
-• Track your order status using your order ID\n
-\n
+• Track your order status using your order ID\n\n\n
+\n\n 
 **We currently offer products in the following categories:**\n
 • Electronics (TVs, Laptops)\n
 \n
@@ -855,7 +914,7 @@ def extract_date_from_text(text):
     try:
         # Initialize LLM
         llm = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             temperature=0,
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=100
@@ -940,7 +999,7 @@ def format_sql_results_for_human(results, sql_query, product_name,product_catego
 
 def handle_return_inquiry(results, *_,product_name,product_category=None, user_question = None):
     if results and isinstance(results, list) and "return_period" in results[0]:
-        return f"{product_name} comes with a return of **{results[0]['return_period']} days** from the purchase date, provided the item is unused and in its original packaging."
+        return f"{product_name} comes with a return period of **{results[0]['return_period']} days** from the purchase date, provided the item is unused and in its original packaging."
     return (
         "**Our Return Policy Overview:**\n\n"
         "* Most products can be returned within **30 days** of purchase.\n"
@@ -951,7 +1010,7 @@ def handle_return_inquiry(results, *_,product_name,product_category=None, user_q
 
 def handle_warranty_inquiry(results, *_ , product_name,product_category, user_question = None):
     if results and isinstance(results, list) and "warranty_period" in results[0]:
-        return f"{product_name} comes with a warranty of **{results[0]['warranty_period']} days** covering manufacturing defects. Please contact us for further details."
+        return f"{product_name} comes with a warranty period of **{results[0]['warranty_period']} days** covering manufacturing defects. Please contact us for further details."
     return (
         "**Our Warranty Policy Overview:**\n\n"
         "* Most products come with a **1-year warranty** covering manufacturing defects.\n"
@@ -1129,10 +1188,7 @@ def handle_generic_product_listing(results, product_name=None):
         parts = [f"**{i}. {item.get('product_name', 'Unnamed Product')}**"]
 
         # Basic product fields
-        for key in [
-            "category", "sub_category", "brand", "price",
-            "warranty_period", "return_period", "in_stock"
-        ]:
+        for key in [ "price" ]:
             val = item.get(key)
             if val:
                 label = key.replace("_", " ").title()
@@ -1142,21 +1198,6 @@ def handle_generic_product_listing(results, product_name=None):
         # Optional fields
         if item.get("description"):
             parts.append(f"- **Description**: {item['description']}")
-
-        if item.get("installation_services"):
-            parts.append("- **Installation Services:**")
-            services = [
-                f"  - {line.strip()}" for line in item["installation_services"].split('.') if line.strip()
-            ]
-            parts.extend(services)
-
-        if item.get("shipping"):
-            parts.append("- **Shipping Options:**")
-            for block in item["shipping"].split("\n\n"):
-                lines = block.strip().split("\n")
-                if lines:
-                    parts.append(f"  - **{lines[0].strip()}**")
-                    parts.extend([f"    - {l.replace('●', '-').strip()}" for l in lines[1:] if l.strip()])
 
         output += "\n".join(parts) + "\n\n"
 
@@ -1168,8 +1209,9 @@ def handle_generic_product_listing(results, product_name=None):
 def get_conversational_chain(session_id, ques, chat_history):
     """Generate a conversational response based on user query and intent."""
     session_state = get_session_state(session_id)
-    intent = detect_intent(session_id, ques, chat_history)
+    intent,query_type = detect_intent(session_id, ques, chat_history)
     session_state.last_intent = intent
+    session_state.query = query_type
 
     if intent == "greeting":
         return get_greeting_response()
@@ -1263,14 +1305,17 @@ def get_conversational_chain(session_id, ques, chat_history):
 
     if intent == "general_inquiry":
         llm = ChatOpenAI(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             temperature=0.7,
             api_key=os.getenv("OPENAI_API_KEY")
         )
-        formatted_history = "".join(
-            f"Human: {m.content}\n" if isinstance(m, HumanMessage) 
-            else f"AI: {m.content}\n" for m in chat_history[-5:]
-        )
+        if query_type == "continue":
+            formatted_history = "".join(
+                f"Human: {m.content}\n" if isinstance(m, HumanMessage) 
+                else f"AI: {m.content}\n" for m in chat_history[-5:]
+            )
+        else : 
+            formatted_history = []
         product_context = session_state.product_context if session_state.product_context else ""
         last_order_id = session_state.last_order_id if session_state.last_order_id else ""
         category_info = """
@@ -1294,7 +1339,15 @@ def get_conversational_chain(session_id, ques, chat_history):
 
             Rules:
             - Respond in a warm, conversational tone using Markdown.
+            - CRITICAL : NEVER use emojis in the response.
             - CRITICAL : Avoid mentioning "AI", "SQL", or technical details.
+            - CRITICAL : Detect if the user's message is small talk (e.g., "thanks", "how are you", "bye") and reply appropriately.
+                Consider One Star Electronics in the responses of small talks
+                Respond to these common small talk types:
+                - Greetings (hi, hello, hey, good morning)
+                - Farewells (bye, goodbye, see you later)
+                - Gratitude (thanks, thank you, appreciate it)
+                - Politeness (how are you, how’s it going)
             - CRITICAL : NEVER respond to that are not related to Retail or Order.e.g.what is dog or what is ai.
             - IMPORTANT:
                 If the user query is not related to retail, orders, products, return/refund/warranty/shipping policies, or product availability/pricing — DO NOT answer.
@@ -1316,18 +1369,18 @@ def get_conversational_chain(session_id, ques, chat_history):
             - CRITICAL : NEVER answer using your own knowledge
             - CRITICAL : For any queries which are outside the scope of Assistant's capabilities, which are as following: 
             • Explore products by brand, subcategory, and price\n
-• Provide detailed product information including specifications and pricing\n
-• Explain return and warranty policies for any product\n
-• Check return eligibility based on your purchase date\n
-• Track your order status using your order ID\n
-consider as non-relevant, and respond with: Sorry I can't help you with it\n *Here’s what I can assist you with:**\n
-\n
-\n
-**We currently offer products in the following categories:**\n
-• Electronics (TVs, Laptops)\n
-\n
-\n
-**Feel free to ask whenever you're ready — I'm here to help
+            • Provide detailed product information including specifications and pricing\n
+            • Explain return and warranty policies for any product\n
+            • Check return eligibility based on your purchase date\n
+            • Track your order status using your order ID\n
+            consider as non-relevant, and respond with: Sorry I can't help you with it\n *Here’s what I can assist you with:**\n
+            \n
+            \n
+            **We currently offer products in the following categories:**\n
+            • Electronics (TVs, Laptops)\n
+            \n
+            \n
+            **Feel free to ask whenever you're ready — I'm here to help
             - Keep responses concise (2-3 sentences).
 
             Current Time: {datetime.now()}
