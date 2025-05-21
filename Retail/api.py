@@ -290,7 +290,7 @@ def generate_sql_query(session_id, user_query, chat_history, order_id=None, inte
     print(formatted_history)
     session_state = get_session_state(session_id)
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
+        model="gpt-4o",
         temperature=0,
         api_key=os.getenv("OPENAI_API_KEY"),
         max_tokens=300
@@ -844,9 +844,10 @@ def determine_data_source(intent, question):
             return "sql"
         return "pdf"
 
-def extract_order_id(query, chat_history):
+def extract_order_id(session_id,query, chat_history):
     """Extract order ID from query or fallback to last found in chat history."""
-
+    session_state = get_session_state(session_id)
+    query_type = session_state.query 
     patterns = [
         r'order\s+(?:id|number|#)?\s*[:#]?\s*([a-zA-Z]*\d+[a-zA-Z\d-]*)',
         r'#\s*([a-zA-Z]*\d+[a-zA-Z\d-]*)',
@@ -861,12 +862,13 @@ def extract_order_id(query, chat_history):
             return match.group(1).strip()
 
     # Search last 10 messages in chat history
-    for message in reversed(chat_history[-5:]):
-        if hasattr(message, 'content'):
-            for pattern in patterns:
-                match = re.search(pattern, message.content, re.IGNORECASE)
-                if match:
-                    return match.group(1).strip()
+    if query_type == "continue":
+        for message in reversed(chat_history[-5:]):
+            if hasattr(message, 'content'):
+                for pattern in patterns:
+                    match = re.search(pattern, message.content, re.IGNORECASE)
+                    if match:
+                        return match.group(1).strip()
 
     return None
 
@@ -1076,10 +1078,10 @@ def handle_best_product(results, *_ , product_name,product_category, __):
 
 
 def handle_order_inquiry(results, *_ ,product_name,product_category=None, user_question=None):
-    formatted = "**📦 Order Details:**\n\n"
+    formatted = "**Order Details:**\n\n"
     for i, order in enumerate(results, 1):
         try:
-            formatted += f"{i}. **Order ID**: `{order.get('order_id', 'N/A')}`\n"
+            formatted += f" **Order ID**: {order.get('order_id', 'N/A')}\n"
             formatted += f"   - **Order Date**: {order.get('order_date').strftime('%B %d, %Y') if order.get('order_date') else 'N/A'}\n"
             for field in [
                 "order_status", "item", "returnable", "in_warranty",
@@ -1213,6 +1215,12 @@ def get_conversational_chain(session_id, ques, chat_history):
     session_state.last_intent = intent
     session_state.query = query_type
 
+    if query_type == "new_query":
+        session_state.product_context = None
+        session_state.last_order_id = None
+        session_state.last_sql_results = None
+        session_state.last_sql_query = None
+        
     if intent == "greeting":
         return get_greeting_response()
     elif intent == "capability_inquiry":
@@ -1225,7 +1233,7 @@ def get_conversational_chain(session_id, ques, chat_history):
         print(f"P : {product_name}")
         if intent in ['return_inquiry', 'warranty_inquiry','warranty_date','return_date','installation_inquiry'] and not product_name:
             return "**I wasn’t able to find enough information to answer that.** \n\n Please ask your question again and include the product name so I can help you accurately."
-        order_id = extract_order_id(ques,chat_history)
+        order_id = extract_order_id(session_id,ques,chat_history)
         if intent == "order_inquiry" and not order_id:
             return "To provide details about your order, please share your order ID."
         retrieved_data, sql_query, product_category, budget_constraint = query_sql_database(session_id, ques, chat_history, order_id, intent,product_name)
