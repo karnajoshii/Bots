@@ -45,7 +45,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Initialize LLM
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, api_key=OPENAI_API_KEY)
+llm = ChatOpenAI(model="gpt-4o", temperature=0, api_key=OPENAI_API_KEY)
 
 # Query context to store the latest data query result and filters
 class QueryContext:
@@ -297,27 +297,21 @@ def is_query_continuation(user_query, chat_id):
     
     # Use LLM to analyze semantic continuity
     prompt = f"""
-You are a context-aware assistant tasked with determining if a user's current query is a continuation of the prior conversation. A continuation query:
-- Refers to the same entity, dataset, or topic as the prior query (e.g., 'how many are married' after 'How many customers are from California?' refers to California customers).
-- May include vague references or modifiers (e.g., 'same details year wise' after asking for claim details implies the same data grouped by year).
-- May use phrases like 'ok', 'same', 'also', or 'now' to indicate continuation.
-- Does NOT introduce a new dataset or topic (e.g., 'all customers' or 'give me a new' indicates a new query).
-
-**Instructions:**
-1. Analyze the conversation history and current user query.
-2. Check if the query logically extends the prior topic, dataset, or entity, even if it includes new modifiers (e.g., 'year wise', 'by gender').
-3. Consider phrases like 'same details', 'ok', or 'now' as strong indicators of continuation.
-4. Queries with explicit standalone phrases (e.g., 'now show me', 'all customers') are NOT continuations.
-5. Return 'True' if the query is a continuation, 'False' if it introduces a new topic or is standalone.
-
-**CONVERSATION HISTORY:**
-{formatted_history}
-
-**CURRENT USER QUERY:**
-{user_query}
-
-**Response:**
-Return only 'True' or 'False'
+You are a context-aware assistant that decides whether a user's current query is a continuation of the prior conversation or a new, standalone question.
+ 
+A query is a **continuation** if:
+- It refers to the **same dataset, topic, or filter** as the previous query (e.g., still discussing a specific state or policy type).
+- It omits context that was clearly stated earlier (e.g., says “now group by gender” after a question about Arizona).
+- It includes vague follow-ups like “same”, “also”, “what about now”, or relies on prior filters to be understood.
+ 
+A query is **not a continuation** if:
+- It **explicitly includes all the details** required to answer it independently (i.e., it's fully self-contained).
+- It introduces a **new topic, filter, grouping, or entity**, such as switching from “state” to “marital status”, or from “Arizona” to “all customers”.
+- It uses phrases like “start over”, “all data”, or shifts to a new scope.
+ 
+You must evaluate the **semantic dependency** between queries, not just keyword matching.
+ 
+Return only: `True` or `False`
 """
     response = llm.invoke(prompt)
     is_continuation = response.content.strip() == 'True'
@@ -515,7 +509,11 @@ CRITICAL INSTRUCTIONS:
        FROM insurance
        WHERE "Vehicle Class" = 'Two-Door Car';
 7. SQL GENERATION:
-   - Use COUNT(*), SUM(), AVG() with clear aliases.
+   -Use `SUM()` when the column represents a quantity per customer that should be totaled across rows:
+     - Examples: "Number of Policies", "Number of Open Complaints", "Total Claim Amount"
+   -Use `AVG()` when the goal is to find average values for continuous numeric fields:
+     - Examples: "Income", "Customer Lifetime Value", "Monthly Premium Auto"
+   - Use `COUNT(*)` only when the user explicitly asks for the **number of customers** or **number of records**, not for summing a numeric column.
    - Wrap column names with spaces in double quotes (e.g., "Vehicle Class").
    - Use precise values (e.g., "Vehicle Class" = 'Two-Door Car').
    - Return plain text SQL without markdown.
@@ -925,7 +923,7 @@ def ask_question(user_query, schema, chat_id):
             }
     except Exception as e:
         logging.error(f"Error in ask_question: {str(e)}")
-        response_text = "I'm focused on helping with auto insurance questions. Is there something about your auto policy, coverage, or insurance claims I can help with instead?"
+        response_text = "I can assist only with questions that are derived from the customer dataset — such as policies, claims, coverage, and customer insights"
         save_chat_message(chat_id, 'user', user_query)
         save_chat_message(chat_id, 'assistant', response_text)
         return {"text": response_text, "visualization": None, "sql": None}
@@ -947,7 +945,7 @@ def ask_general_question(query, chat_id, bot_name="Aira"):
         if any(phrase in query_lower for phrase in ["what can you do", "your capabilities", "what are you able to",
                                                    "help me with", "what do you know", "how can you help",
                                                    "what can you help with", "what are your abilities"]):
-            capability_response = f"""I'm {bot_name}, here to help you gain valuable insights from your auto insurance claims database. You can ask about claim amounts, customer demographics, policy types, vehicle details, coverage patterns, and sales channel trends. I deliver clear, data-driven responses based on your records."""
+            capability_response = f"""I'm {bot_name}, here to help you gain valuable insights from your insurance customers database. You can ask about claim amounts, customer demographics, policy types, vehicle details, coverage patterns, and sales channel trends. I deliver clear, data-driven responses based on records."""
             save_chat_message(chat_id, 'user', query)
             save_chat_message(chat_id, 'assistant', capability_response)
             return {"text": capability_response, "visualization": None, "sql": None}
@@ -968,8 +966,8 @@ Guidelines for your response:
 - If the user says "Good afternoon", respond with an enhanced afternoon greeting
 - If the user says "Good evening", respond with an enhanced evening greeting
 - Keep it brief and warm (1-2 sentences)
-- Mention you're an auto insurance assistant ready to help
-- Include that you can provide insurance information and data insights
+- Mention you're an Insurance data insights assistant ready to help
+- Include that you can help in exploring customer-level data on policies, claims, and customer value to uncover meaningful trends and patterns, all based strictly on the available dataset.
 - Be conversational and natural
 - Avoid sounding robotic
 
@@ -995,7 +993,7 @@ CURRENT QUESTION:
 
 Guidelines for your response:
 - Always refer to yourself as {bot_name} if you need to mention your name
-- Be warm and conversational And make sure to keep the conversation history in mind
+- Be warm and conversational&nbsp;And make sure to keep the conversation history in mind
 - If the question is about an insurance concept or definition (like "What is a deductible?", "How does comprehensive coverage work?"), provide a CLEAR and CONCISE explanation
 - For general insurance questions, focus on being INFORMATIVE while using simple language
 - For greetings or social messages, be BRIEF and FRIENDLY
@@ -1146,7 +1144,7 @@ def handle_visualization_only(user_query, chat_id):
 # Out of scope handler
 def handle_out_of_scope(query, chat_id):
     """Handles questions that are not relevant to insurance."""
-    response_text = "I'm focused on helping with auto insurance questions. Is there something about your auto policy, coverage, or insurance claims I can help with instead?"
+    response_text = "I can assist only with questions that are derived from the customer dataset — such as policies, claims, coverage, and customer insights"
     save_chat_message(chat_id, 'user', query)
     save_chat_message(chat_id, 'assistant', response_text)
     return {"text": response_text, "visualization": None, "sql": None}
@@ -1297,10 +1295,6 @@ def reset_conversation():
         return jsonify({"status": "success", "message": "Conversation reset"})
     else:
         return jsonify({"status": "error", "message": "Failed to reset conversation"}), 500
-    
-@app.route('/')
-def home():
-    return {"message": "Insurance Flask API running!"}
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5001)
+    app.run(debug=True, host="192.168.1.14", port=5000)
