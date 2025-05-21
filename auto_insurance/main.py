@@ -470,6 +470,8 @@ PERCENTAGE QUERY RULES:
 DATABASE SCHEMA:
 {schema_description}
 
+NOTE:'Gender' has values 'M', 'F'. 'Coverage' has 'Basic', 'Extended', 'Premium'. 'Education' has 'Bachelor', 'High School or Below', 'College', 'Master', 'Doctor'.'Response' has 'No', 'Yes'. 'Vehicle Class' has ' Four-Door Cars', 'SUVs', 'Two-Door Cars', 'Sports Cars', 'Luxury Cars', 'Luxury SUVs'.'Employment Status' has 'Employed', 'Unemployed', 'Retired', 'Medical Leave', 'Disabled'.'Location' has 'Urban', 'Rural, 'Suburban'.'Marital Status' has 'Married', 'Single', 'Divorced'.'Policy Type' has 'Corporate Auto', 'Personal Auto', 'Special Auto'.'Policy' has 'Corporate L1', 'Corporate L2', 'Corporate L3', 'Personal L1', 'Personal L2', 'Personal L3', 'Special L1', 'Special L2', 'Special L3'.'Sales Channel' has 'Web', 'Branch', 'Agent', 'Call Center'.'Vehicle Size' has 'Medsize', 'Small', 'Large'.
+
 CONVERSATION HISTORY:
 {formatted_history if use_context else 'No relevant history for this query'}
 
@@ -583,53 +585,46 @@ def run_sql(sql_query, engine):
 
 # Analyze data structure
 def analyze_data_structure(result_data):
-    """Analyze data structure to determine if it's suitable for visualization."""
     if isinstance(result_data, dict) and "data" in result_data:
         data_to_analyze = result_data["data"]
     else:
         data_to_analyze = result_data
-    
+ 
     if not data_to_analyze:
         return False, "No data available for visualization"
-    
+ 
     if isinstance(data_to_analyze, str) and data_to_analyze.replace('.', '').isdigit():
         return False, "Single numeric value is not suitable for visualization"
-    
+ 
     if isinstance(data_to_analyze, list):
-        if not data_to_analyze:
-            return False, "Empty result set"
-        if len(data_to_analyze) < 1:
+        if not data_to_analyze or len(data_to_analyze) < 2:
             return False, "Not enough data points for visualization"
-        
-        has_numeric = False
-        numeric_key = None
-        for item in data_to_analyze:
-            for key, value in item.items():
-                try:
-                    if value is None:
-                        continue
-                    if isinstance(value, (int, float)):
-                        has_numeric = True
-                        numeric_key = key
-                        break
-                    if isinstance(value, str) and value.replace(',', '').replace('.', '').isdigit():
-                        has_numeric = True
-                        numeric_key = key
-                        break
-                except (ValueError, AttributeError) as e:
-                    logging.debug(f"Non-numeric value detected for key {key}: {value}, error: {e}")
-                    continue
-            if has_numeric:
-                break
-                
-        if not has_numeric:
+ 
+        sample = data_to_analyze[0]
+        if not isinstance(sample, dict):
+            return False, "Unsupported data format"
+ 
+        numeric_keys = []
+        non_numeric_keys = []
+        for key, value in sample.items():
+            if value is None:
+                continue
+            try:
+                if isinstance(value, (int, float)) or (isinstance(value, str) and value.replace(',', '').replace('.', '').isdigit()):
+                    numeric_keys.append(key)
+                else:
+                    non_numeric_keys.append(key)
+            except Exception:
+                continue
+ 
+        if not numeric_keys:
             return False, "No numeric values found for visualization"
-        
-        if len(data_to_analyze) <= 1:
-            return False, "Not enough data points for comparison"
-        
-        return True, f"Data is suitable for visualization with numeric key: {numeric_key}"
-    
+ 
+        if len(non_numeric_keys) > 1:
+            return False, f"Too many grouping fields ({', '.join(non_numeric_keys)}); unclear which one to use as x-axis or legend"
+ 
+        return True, f"Data is suitable for x: {non_numeric_keys[0]}, y: {numeric_keys[0]}"
+ 
     return False, "Data structure not suitable for visualization"
 
 # Identify axes
@@ -860,6 +855,7 @@ Be friendly and focus on answering the user's question accurately.
 """
 
     response = llm.invoke(prompt)
+    print(f"1234567890{response.content}")
     return response.content.strip()
 
 # Main database query function
@@ -873,6 +869,7 @@ def ask_question(user_query, schema, chat_id):
             sql_query = generate_sql(user_query, schema, chat_id)
             
             if sql_query.startswith("Answer from history:"):
+                print("Using cached response from history")
                 response_text = sql_query.replace("Answer from history:", "").strip()
                 result_data = None
                 visualization_data = None
@@ -886,6 +883,9 @@ def ask_question(user_query, schema, chat_id):
                 current_query_context.filters = extract_filters_from_history(format_conversation_history(chat_id), sql_query)
                 
                 should_viz, viz_reason = should_visualize(user_query, result_data)
+                
+            
+                print(f"Should visualize: {should_viz},")
                 
                 visualization_data = None
                 if should_viz:
@@ -1034,8 +1034,9 @@ Your job is to classify the query into ONE of these categories:
 1. **data_query** – The user is asking about:
    - Customer data, insurance policies, claims, premiums, payments from the database
    - Statistics/aggregations about the data (counts, averages, percentages, etc.)
+   - Simple listing requests like "show me claims by state" without visualization format specified
    - Follow-up questions that logically extend previous data queries
-   - Examples: "How many customers are married?", "What about California customers?", "Percentage of claims for Two-Door Car"
+   - Examples: "How many customers are married?", "What about California customers?", "Percentage of claims for Two-Door Car", "Show me state-wise claim data"
    - CRITICAL: "What is insurance?" is NOT a data query
    - CRITICAL: "What is auto insurance?" is NOT a data query
    - CRITICAL: "What can you do?" is NOT a data query
@@ -1054,17 +1055,21 @@ Your job is to classify the query into ONE of these categories:
    - Weather, sports, news, other insurance types
    - CRITICAL: Examples: "What's the weather?", "Who won the World Cup?", "Tell me about health insurance", "What is auto insurance?", "What is insurance?"
 
-4. **visualization_only** – Request to visualize previous data:
-   - Examples: "Make a pie chart", "Visualize the data"
+4. **visualization_only** – Request to visualize previously retrieved or discussed data:
+   - User first requested data and is now asking for visualization without new criteria
+   - Examples: "Make a pie chart of this data", "Visualize the data", "Show this as a bar chart", "Create a graph for these results"
+   - CRITICAL: These are follow-up requests to visualize data already discussed
 
-5. **visualization_with_criteria** – Visualization with new filters:
-   - Examples: "Bar chart for female customers", "Pie chart of complaints by region"
+5. **visualization_with_criteria** – Request for visualization with specific data criteria:
+   - Direct requests for visualizations with filtering criteria in a single query
+   - Examples: "Show me a bar chart of claims by state", "Create a pie chart for total claim amount by vehicle type", "Give me visualization for total claim amount by state", "Graph the average premium by age group"
+   - CRITICAL: Any request that simultaneously asks for visualization AND specifies what data to visualize
 
 CLASSIFICATION RULES:
 1. CAPABILITY QUESTIONS: Any questions about what the chatbot can do, its abilities, or how it can help MUST be classified as "general_chat"
-2. FOLLOW-UP DETECTION: Queries extending prior data topics are "data_query"
-3. NEW TOPIC DETECTION: Queries with "now show me" or topic shifts are standalone
-4. DATA QUESTIONS: Queries answerable from the insurance database schema are "data_query"
+2. VISUALIZATION DETECTION: If the query includes terms like "chart", "graph", "plot", "visualization", "pie chart", "bar graph" AND specifies what data to visualize, classify as "visualization_with_criteria"
+3. FOLLOW-UP DETECTION: If user previously requested data and now only asks for visualization format (without specifying new data criteria), classify as "visualization_only"
+4. DATA QUESTIONS: Queries about insurance database information without visualization requests are "data_query"
 5. INFORMATIONAL QUESTIONS: General questions about insurance concepts (not database queries) are "out_of_scope"
 
 Respond with ONLY one of: "data_query", "general_chat", "out_of_scope", "visualization_only", or "visualization_with_criteria"
@@ -1153,7 +1158,7 @@ def handle_out_of_scope(query, chat_id):
 def handle_query(user_query, schema, chat_id):
     """Routes the query to the correct agent based on classification."""
     query_type = classify_query(user_query, schema, chat_id)
-    logging.debug(f"Query type detected: {query_type}")
+    logging.debug(f"Query type detected: {query_type} amd user query: {user_query}")
 
     if query_type == "visualization_only":
         return handle_visualization_only(user_query, chat_id)
@@ -1297,4 +1302,4 @@ def reset_conversation():
         return jsonify({"status": "error", "message": "Failed to reset conversation"}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True, host="192.168.1.14", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5001)
