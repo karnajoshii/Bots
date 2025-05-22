@@ -111,8 +111,7 @@ def execute_query(connection: mysql.connector.connection.MySQLConnection,
         if cursor:
             cursor.close()
 
-def create_session() -> str:
-    """Create a new chat session."""
+def create_session(client_id: str) -> str:
     session_id = str(uuid.uuid4())
     conn = get_db_connection()
     if not conn:
@@ -120,11 +119,11 @@ def create_session() -> str:
     
     try:
         query = """
-            INSERT INTO chat_sessions (id, created_at, deleted)
-            VALUES (%s, %s, %s)
+            INSERT INTO chat_sessions (id, client_id, created_at, deleted)
+            VALUES (%s, %s, %s, %s)
         """
-        execute_query(conn, query, (session_id, datetime.now(), False), fetch=False)
-        logger.info(f"Created new session: {session_id}")
+        execute_query(conn, query, (session_id, client_id, datetime.now(), False), fetch=False)
+        logger.info(f"Created new session: {session_id} for client: {client_id}")
         return session_id
     finally:
         if conn and conn.is_connected():
@@ -140,10 +139,10 @@ def save_chat_message(session_id: str, role: str, message: str) -> bool:
     try:
         message_id = str(uuid.uuid4())
         query = """
-            INSERT INTO chat_messages (id, chat_id, role, message, timestamp)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO chat_messages (id, chat_id, role, message)
+            VALUES (%s, %s, %s, %s)
         """
-        execute_query(conn, query, (message_id, session_id, role, message, datetime.now()), fetch=False)
+        execute_query(conn, query, (message_id, session_id, role, message), fetch=False)
         logger.debug(f"Saved message for session {session_id}")
         return True
     except Exception as e:
@@ -185,11 +184,11 @@ def retrieve_chat_history(session_id: str) -> Dict[str, Any]:
     
     try:
         query = """
-            SELECT cm.role, cm.message, cm.timestamp
+            SELECT cm.role, cm.message, cm.timestamp, cs.client_id
             FROM chat_messages cm
             JOIN chat_sessions cs ON cm.chat_id = cs.id
             WHERE cm.chat_id = %s AND cs.deleted = FALSE
-            ORDER BY cm.timestamp DESC
+            ORDER BY cm.timestamp ASC
         """
         messages = execute_query(conn, query, (session_id,), fetch=True)
         
@@ -202,7 +201,7 @@ def retrieve_chat_history(session_id: str) -> Dict[str, Any]:
         formatted_messages = [
             HumanMessage(content=msg["message"]) if msg["role"] == "user"
             else AIMessage(content=msg["message"])
-            for msg in reversed(messages)  # Reverse to maintain chronological order
+            for msg in messages  # No reversal needed
         ]
         
         if session_id not in session_context_cache:
@@ -220,7 +219,8 @@ def retrieve_chat_history(session_id: str) -> Dict[str, Any]:
             "order_ids": session_context_cache[session_id]["order_ids"],
             "last_order_id": session_context_cache[session_id]["last_order_id"],
             "email": session_context_cache[session_id]["email"],
-            "last_intent": session_context_cache[session_id]["last_intent"]
+            "last_intent": session_context_cache[session_id]["last_intent"],
+            "client_id": messages[0]["client_id"] if messages else None
         }
     except Exception as e:
         logger.error(f"Chat history retrieval error: {e}")
@@ -509,14 +509,14 @@ def handle_small_talks(session_id: str, query: str) -> Dict[str, str]:
         if not response_text:
             response_text = "Nice to chat! How can I assist with your logistics needs?"
 
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response_text)
         update_session_context(session_id, "small_talks", query)
         return {"response": response_text}
     except Exception as e:
         logger.error(f"Error handling small talk query: {e}")
         response_text = "Nice to chat! How can I assist with your logistics needs?"
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response_text)
         update_session_context(session_id, "small_talks", query)
         return {"response": response_text}
@@ -695,7 +695,7 @@ def handle_reschedule_delivery(session_id: str, query: str, chat_history: Option
     
     if not order_id:
         response = "Could you please share your valid order ID, so I can check the details for you?"
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         update_session_context(session_id, "reschedule_delivery", query, waiting_for="order_id")
         return {"response": response}
@@ -711,7 +711,7 @@ def handle_reschedule_delivery(session_id: str, query: str, chat_history: Option
         
         if not result:
             response = f"Order {order_id} not found. Please verify the order ID and try again."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             return {"response": response}
         
@@ -719,7 +719,7 @@ def handle_reschedule_delivery(session_id: str, query: str, chat_history: Option
         
         if not order_details['reschedule_eligible']:
             response = f"Order {order_id} can no longer be rescheduled.\n If you need further assistance, please contact our support team."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             update_session_context(session_id, "reschedule_delivery", query, order_id)
             return {"response": response}
@@ -729,7 +729,7 @@ def handle_reschedule_delivery(session_id: str, query: str, chat_history: Option
         if not date_str or date_str == '""':
             current_date = order_details['expected_delivery']
             response = f"Please provide the new delivery date for order {order_id} (current date: {current_date})."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             update_session_context(session_id, "reschedule_delivery", query, order_id, waiting_for="date")
             return {"response": response}
@@ -738,14 +738,14 @@ def handle_reschedule_delivery(session_id: str, query: str, chat_history: Option
             new_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             if new_date <= datetime.now().date():
                 response = "I’m sorry, but rescheduling is only possible for future dates. Could you please provide a valid future date?"
-                save_chat_message(session_id, 'user', query)
+                # save_chat_message(session_id, 'user', query)
                 save_chat_message(session_id, 'assistant', response)
                 update_session_context(session_id, "reschedule_delivery", query, order_id, waiting_for="date")
                 return {"response": response}
             
             if (new_date - datetime.now().date()).days > 30:
                 response = "To ensure timely processing, rescheduling is limited to dates within the next 30 days. Please choose a date within that range."
-                save_chat_message(session_id, 'user', query)
+                # save_chat_message(session_id, 'user', query)
                 save_chat_message(session_id, 'assistant', response)
                 update_session_context(session_id, "reschedule_delivery", query, order_id, waiting_for="date")
                 return {"response": response}
@@ -754,20 +754,20 @@ def handle_reschedule_delivery(session_id: str, query: str, chat_history: Option
             execute_query(conn, update_query, (new_date, order_id), fetch=False)
             
             response = f"The delivery for Order {order_id} has been rescheduled to {new_date}. \n Is there anything else I can help you with?"
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             update_session_context(session_id, "reschedule_delivery", query, order_id, waiting_for=None)
             return {"response": response}
         except ValueError:
             response = f"Please provide the new delivery date for order {order_id} in a valid format (e.g., '2025-05-20' or 'tomorrow')."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             update_session_context(session_id, "reschedule_delivery", query, order_id, waiting_for="date")
             return {"response": response}
     except Exception as e:
         logger.error(f"Error in reschedule delivery: {e}")
         response = "An error occurred while processing your request. Please try again or contact support."
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         update_session_context(session_id, "reschedule_delivery", query, order_id)
         return {"response": response}
@@ -832,7 +832,7 @@ def handle_address_change(session_id: str, query: str, chat_history: Optional[Li
     
     if not order_id:
         response = "Could you please share your valid order ID, so I can check the details for you?"
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         update_session_context(session_id, "address_change", query, waiting_for="order_id")
         return {"response": response}
@@ -848,7 +848,7 @@ def handle_address_change(session_id: str, query: str, chat_history: Optional[Li
         
         if not result:
             response = f"Order {order_id} not found. Please verify the order ID and try again."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             return {"response": response}
         
@@ -856,7 +856,7 @@ def handle_address_change(session_id: str, query: str, chat_history: Optional[Li
         
         if not order_details['address_change_eligible']:
             response = f"Order {order_id} isn’t eligible for an address change at this stage.\n If you need further assistance, please contact our support team."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             update_session_context(session_id, "address_change", query, order_id)
             return {"response": response}
@@ -866,7 +866,7 @@ def handle_address_change(session_id: str, query: str, chat_history: Optional[Li
         if not new_address:
             current_address = order_details['delivery_address']
             response = f"Please share the new delivery address for Order {order_id}. The current address on record is: {current_address}."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             update_session_context(session_id, "address_change", query, order_id, waiting_for="address")
             return {"response": response}
@@ -875,14 +875,14 @@ def handle_address_change(session_id: str, query: str, chat_history: Optional[Li
         execute_query(conn, update_query, (new_address, order_id), fetch=False)
         
         response = f"The address for {order_id} has been updated to:\n  {new_address}. \n Is there anything else I can help you with?"
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         update_session_context(session_id, "address_change", query, order_id, waiting_for=None)
         return {"response": response}
     except Exception as e:
         logger.error(f"Error in address change: {e}")
         response = "An error occurred while processing your request. Please try again or contact support."
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         update_session_context(session_id, "address_change", query, order_id)
         return {"response": response}
@@ -897,7 +897,7 @@ def handle_general_query(session_id: str, query: str) -> Dict[str, str]:
     
     if any(greeting in normalized_query for greeting in greetings):
         response = """
-Hi! I’m your delivery assistant.\n
+Hi! I’m **AIRA**.\n
 I can help you with the following:\n
 - Track your shipment\n
 - Reschedule a delivery\n
@@ -910,7 +910,7 @@ Just tell me what you’d like help with!
             """
     else:
         response = """
-Hi! I’m your delivery assistant.\n
+Hi! I’m **AIRA**.\n
 I can help you with the following:\n
 - Track your shipment\n
 - Reschedule a delivery\n
@@ -921,7 +921,7 @@ I can help you with the following:\n
 Just tell me what you’d like help with!
 """
     
-    save_chat_message(session_id, 'user', query)
+    # save_chat_message(session_id, 'user', query)
     save_chat_message(session_id, 'assistant', response)
     update_session_context(session_id, "general", query)
     return {"response": response}
@@ -942,11 +942,10 @@ def handle_capabilities_query(session_id: str, query: str) -> Dict[str, str]:
         Just tell me what you’d like help with!
     """)
 
-    save_chat_message(session_id, 'user', query)
+    # save_chat_message(session_id, 'user', query)
     save_chat_message(session_id, 'assistant', response)
     update_session_context(session_id, "capabilities", query)
     return {"response": response}
-
 
 def chat_with_csv(session_id: str, query: str) -> Dict[str, Any]:
     """Handle CSV-based FAQ queries."""
@@ -993,14 +992,14 @@ def chat_with_csv(session_id: str, query: str) -> Dict[str, Any]:
         if not response_text:
             response_text = "I don't have enough information to answer that. Please provide more details or ask about something else."
         
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response_text)
         update_session_context(session_id, "csv", query)
         return {"response": response_text}
     except Exception as e:
         logger.error(f"CSV query error: {e}")
         response = "An error occurred while processing your FAQ query. Please try again."
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         return {"response": response}
 
@@ -1013,7 +1012,7 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
 
     if not order_id:
         response = "Could you please share your valid order ID, so I can check the details for you?"
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         update_session_context(session_id, "mysql", query, waiting_for="order_id")
         return {"response": response}
@@ -1035,13 +1034,15 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
         
         context_info = f"Order ID: {order_id}\n" if order_id else f"Email: {email}\n"
         prompt_template = ChatPromptTemplate.from_template(
-            """
-            You are a logistics assistant. The 'orders' table has columns: order_id, customer_name, email, status, expected_delivery, delivery_address, is_active, has_invoice, invoice_url, created_at, reschedule_eligible, address_change_eligible.
+            f"""
+            Current Query : {query}
+            You are a logistics assistant.
             You need to classify that wheater the user asks for the shipment or invoice.
             If the query is related to the invoice only than classify in 'invoice'.
             If details of the order is asked just return shipment.
             CRITICAL : If you are unable to find that than simply classify in the shipment.
             Response must be shipment or invoice nothing else.
+            If not able to classify in any than simply return shipment.
             """
         )
         try:
@@ -1076,6 +1077,7 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
             SQL Query: {sql_query}
             SQL Response: {sql_response}
             Use 'according to my knowledge' if appropriate. If no data, suggest providing more details.
+            Format the data correctly and human readable with stars and bullet points.
             """
         )
         try:
@@ -1097,7 +1099,7 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
         sql_query = get_sql(db.get_table_info(), formatted_history, query, order_id)
         
         if sql_query.startswith("Please provide"):
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', sql_query)
             update_session_context(session_id, "mysql", query, order_id)
             return {"response": sql_query}
@@ -1107,13 +1109,13 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
         except Exception as e:
             logger.error(f"SQL execution error: {e}")
             response = "Sorry, I encountered an error. Please try again or refine your question."
-            save_chat_message(session_id, 'user', query)
+            # save_chat_message(session_id, 'user', query)
             save_chat_message(session_id, 'assistant', response)
             return {"response": response, "sql_query": sql_query, "sql_response": str(e)}
         
         natural_language_response = get_response(db.get_table_info(), formatted_history, query, sql_query, sql_response)
         
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', natural_language_response)
         update_session_context(session_id, "mysql", query, order_id)
         
@@ -1125,15 +1127,20 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
     except Exception as e:
         logger.error(f"Unexpected error in MySQL query: {e}")
         response = "An unexpected error occurred. Please try again or contact support."
-        save_chat_message(session_id, 'user', query)
+        # save_chat_message(session_id, 'user', query)
         save_chat_message(session_id, 'assistant', response)
         return {"response": response}
 
 @app.route('/start_session', methods=['POST'])
 def start_session():
-    """Start a new session."""
     try:
-        session_id = create_session()
+        data = request.get_json()
+        client_id = data.get('client_id') if data else None
+        if not client_id:
+            logger.warning("Missing client_id in start_session request")
+            return jsonify({"error": "Client ID is required", "error_code": "MISSING_CLIENT_ID"}), 400
+        
+        session_id = create_session(client_id)
         return jsonify({"status": "success", "session_id": session_id}), 201
     except Exception as e:
         logger.error(f"Session creation error: {e}")
@@ -1176,34 +1183,40 @@ def upload_csv():
 
 @app.route('/query', methods=['POST'])
 def query_data():
-    """Handle user queries."""
     try:
         data = request.get_json()
-        if not data or 'session_id' not in data or 'query' not in data:
+        if not data or 'session_id' not in data or 'query' not in data or 'client_id' not in data:
             logger.warning("Missing parameters in query request")
-            return jsonify({"error": "Session ID and query are required", "error_code": "MISSING_PARAMETERS"}), 400
+            return jsonify({"error": "Session ID, client ID, and query are required", "error_code": "MISSING_PARAMETERS"}), 400
 
         session_id = data['session_id']
+        client_id = data['client_id']
         user_input = data['query'].strip()
+        order_id = data.get('order_id')
+
+        # Validate client_id
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed", "error_code": "DB_CONNECTION_FAILED"}), 500
+        try:
+            query = "SELECT client_id FROM chat_sessions WHERE id = %s AND deleted = FALSE"
+            result = execute_query(conn, query, (session_id,), fetch=True)
+            if not result or result[0]['client_id'] != client_id:
+                logger.warning(f"Invalid client_id for session: {session_id}")
+                return jsonify({"error": "Invalid session or client ID", "error_code": "INVALID_SESSION"}), 400
+        finally:
+            if conn and conn.is_connected():
+                conn.close()
+
         if not user_input:
             logger.warning("Empty query received")
             return jsonify({"error": "Query cannot be empty", "error_code": "EMPTY_QUERY"}), 400
         
         logger.info(f"Processing query: '{user_input}' for session: {session_id}")
         
+        save_chat_message(session_id, 'user', user_input)
         intent = intent_classifier(user_input, session_id)
         logger.debug(f"Classified intent: {intent} for query: {user_input}")
-        
-        # Check if the query is continuing an existing conversation
-        if intent not in ["general", "capabilities", "small_talks"] and is_continuing_query(session_id, intent, user_input):
-            print(f"Continuing query detected for session {session_id}")
-        else:
-            if session_context_cache.get(session_id, {}).get("last_intent") and intent != session_context_cache[session_id]["last_intent"]:
-                response = f"Would you like to switch to a new topic ({intent}) or continue with the previous request?"
-                save_chat_message(session_id, 'user', user_input)
-                save_chat_message(session_id, 'assistant', response)
-                update_session_context(session_id, intent, user_input)
-                return jsonify({"response": response}), 200
         
         chat_history = retrieve_chat_history(session_id)["messages"]
         
@@ -1235,6 +1248,8 @@ def query_data():
                 "sql_query": result["sql_query"],
                 "sql_response": result["sql_response"]
             })
+        if order_id:
+            response["order_id"] = order_id
         
         logger.info(f"Query processed successfully for session {session_id}")
         return jsonify(response), 200
@@ -1247,47 +1262,23 @@ def query_data():
 @app.route('/chat_history/<session_id>', methods=['GET'])
 def get_chat_history_endpoint(session_id: str):
     """Retrieve chat history for a session."""
-    conn = get_db_connection()
-    if not conn:
-        logger.error("Database connection failed for chat history")
-        return jsonify({"error": "Database connection failed", "error_code": "DATABASE_CONNECTION_FAILED"}), 500
-
     try:
-        # Query to fetch messages
-        query = """
-            SELECT cm.role, cm.message, cm.timestamp
-            FROM chat_messages cm
-            JOIN chat_sessions cs ON cm.chat_id = cs.id
-            WHERE cm.chat_id = %s AND cs.deleted = FALSE
-            ORDER BY cm.timestamp ASC  
-        """
-        messages = execute_query(conn, query, (session_id,), fetch=True)
-
-        # Check if session exists
-        if not messages and not execute_query(conn, 
-            "SELECT id FROM chat_sessions WHERE id = %s AND deleted = FALSE", 
-            (session_id,), fetch=True):
-            logger.warning(f"Session not found: {session_id}")
-            return jsonify({"error": "Session not found or deleted", "error_code": "INVALID_SESSION"}), 404
-
-        # Format messages directly
+        history_data = retrieve_chat_history(session_id)
         formatted_messages = [
             {
-                "role": msg["role"],
-                "content": msg["message"].strip(),  # Strip whitespace
-                "timestamp": msg["timestamp"].isoformat()
+                "role": "user" if isinstance(msg, HumanMessage) else "assistant",
+                "content": msg.content,
+                "timestamp": msg.created_at.isoformat() if hasattr(msg, 'created_at') else datetime.now().isoformat()
             }
-            for msg in messages
+            for msg in history_data["messages"]
         ]
-
         return jsonify({"messages": formatted_messages}), 200
     except Exception as e:
         logger.error(f"Chat history retrieval error: {e}")
+        if str(e) == "Session not found or deleted":
+            return jsonify({"error": "Session not found or deleted", "error_code": "INVALID_SESSION"}), 404
         return jsonify({"error": str(e), "error_code": "HISTORY_RETRIEVAL_FAILED"}), 500
-    finally:
-        if conn and conn.is_connected():
-            conn.close()
-
+    
 @app.route('/clear_session', methods=['POST'])
 def clear_session():
     """Clear chat history for a session."""

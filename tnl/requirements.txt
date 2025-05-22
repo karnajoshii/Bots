@@ -11,3 +11,4 @@ faiss-cpu
 Werkzeug
 Flask
 flask-cors
+textwrap
