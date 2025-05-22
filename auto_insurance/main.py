@@ -792,26 +792,40 @@ def determine_chart_type(user_query, chart_data, x_axis, y_axis):
     else:
         return "bar"
 
-# Generate user-friendly response
+# Here I am I have to modified above code and add such funciton which will display the remaining data as well
+import json
+import re
+
 def generate_user_friendly_response(user_query, result_data, sql_query, has_visualization=False):
     """Generates a conversational, user-friendly response to data queries."""
     is_list_query = is_customer_list_query(user_query)
     is_percentage_query = re.search(r'\b(percentage|percent|proportion)\b', user_query.lower())
-    
+
+    print(f"Result data: {result_data}")
+
     if isinstance(result_data, dict) and "data" in result_data:
         data = result_data["data"]
         total_count = result_data.get("total_count")
+        print(f"Total count: {total_count}")
     else:
+        print("No data found")
         data = result_data
         total_count = None
-    
+
     if isinstance(data, list):
-        result_summary = json.dumps(data[:10], indent=2)
+        print("Data is a list")
+        # Allow full data for grouped summary queries (e.g., grouped by State and Education)
+        if is_list_query:
+            result_summary = json.dumps(data[:10], indent=2)
+        else:
+            result_summary = json.dumps(data, indent=2)
         more_count = total_count - len(data) if total_count and total_count > len(data) else 0
     elif isinstance(data, dict):
+        print("Data is a dictionary")
         result_summary = json.dumps(data, indent=2)
         more_count = 0
     else:
+        print("Data is not a list or dict")
         result_summary = str(data)
         more_count = 0
 
@@ -825,7 +839,7 @@ Additional results not shown: {more_count}
 Has visualization: {has_visualization}
 
 Guidelines:
-1. Be conversational and personable, like a helpful assistant.
+1. Give clear and friendly responses, like a helpful assistant.
 2. Address the user's question directly and completely.
 3. For customer list queries (e.g., 'what are the customers married and located in California?'):
    - List customer details (e.g., Customer ID, State, Marital Status) concisely.
@@ -839,7 +853,7 @@ Guidelines:
    - Example: "About 23.5% of claims are for Two-Door Cars."
 5. For other queries, highlight key insights from the data.
 6. Use natural language, avoiding technical terms.
-7. Keep answers concise but complete (2-4 sentences for non-list queries).
+7. Keep answers concise but complete (2-3 sentences for non-list queries).
 8. If there's a visualization, mention it briefly.
 9. Be precise with numerical results.
 
@@ -855,8 +869,9 @@ Be friendly and focus on answering the user's question accurately.
 """
 
     response = llm.invoke(prompt)
-    print(f"1234567890{response.content}")
+    print(f"LLM Response:\n{response.content}")
     return response.content.strip()
+
 
 # Main database query function
 def ask_question(user_query, schema, chat_id):
@@ -866,6 +881,8 @@ def ask_question(user_query, schema, chat_id):
         engine = setup_database()
 
         with get_openai_callback() as cb:
+            print("HERE I AM")
+            print(f"Chat ID: {chat_id}, User Query: {user_query}")
             sql_query = generate_sql(user_query, schema, chat_id)
             
             if sql_query.startswith("Answer from history:"):
@@ -1302,4 +1319,4 @@ def reset_conversation():
         return jsonify({"status": "error", "message": "Failed to reset conversation"}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5001)
+    app.run(debug=True, host="192.168.1.14", port=5000)
