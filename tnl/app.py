@@ -926,21 +926,19 @@ Just tell me what you’d like help with!
     update_session_context(session_id, "general", query)
     return {"response": response}
 
-import textwrap
-from typing import Dict
 
 def handle_capabilities_query(session_id: str, query: str) -> Dict[str, str]:
     """Handle queries about assistant capabilities."""
-    response = textwrap.dedent("""\
-        I can assist you with the following:
-        - Track your shipment
-        - Reschedule a delivery
-        - Update your address
-        - Get your invoice
-        - Answer common questions
-
-        Just tell me what you’d like help with!
-    """)
+    response = """
+I can help you with the following:\n
+- Track your shipment\n
+- Reschedule a delivery\n
+- Update your address\n
+- Get your invoice\n
+- Answer common questions\n
+\n
+Just tell me what you’d like help with!
+"""
 
     # save_chat_message(session_id, 'user', query)
     save_chat_message(session_id, 'assistant', response)
