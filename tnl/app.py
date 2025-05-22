@@ -926,26 +926,27 @@ Just tell me what you’d like help with!
     update_session_context(session_id, "general", query)
     return {"response": response}
 
+import textwrap
+from typing import Dict
+
 def handle_capabilities_query(session_id: str, query: str) -> Dict[str, str]:
     """Handle queries about assistant capabilities."""
-    response = (
-        """
-        I can assist you with the following:\n
-        - Track your shipment\n
-        - Reschedule a delivery\n
-        - Update your address\n
-        - Get your invoice\n
-        - Answer common questions\n
-        \n
-        Just tell me what you’d like help with!
+    response = textwrap.dedent("""\
+        I can assist you with the following:
+        - Track your shipment
+        - Reschedule a delivery
+        - Update your address
+        - Get your invoice
+        - Answer common questions
 
-            """
-    )
-    
+        Just tell me what you’d like help with!
+    """)
+
     save_chat_message(session_id, 'user', query)
     save_chat_message(session_id, 'assistant', response)
     update_session_context(session_id, "capabilities", query)
     return {"response": response}
+
 
 def chat_with_csv(session_id: str, query: str) -> Dict[str, Any]:
     """Handle CSV-based FAQ queries."""
@@ -1246,22 +1247,46 @@ def query_data():
 @app.route('/chat_history/<session_id>', methods=['GET'])
 def get_chat_history_endpoint(session_id: str):
     """Retrieve chat history for a session."""
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Database connection failed for chat history")
+        return jsonify({"error": "Database connection failed", "error_code": "DATABASE_CONNECTION_FAILED"}), 500
+
     try:
-        history_data = retrieve_chat_history(session_id)
+        # Query to fetch messages
+        query = """
+            SELECT cm.role, cm.message, cm.timestamp
+            FROM chat_messages cm
+            JOIN chat_sessions cs ON cm.chat_id = cs.id
+            WHERE cm.chat_id = %s AND cs.deleted = FALSE
+            ORDER BY cm.timestamp ASC  
+        """
+        messages = execute_query(conn, query, (session_id,), fetch=True)
+
+        # Check if session exists
+        if not messages and not execute_query(conn, 
+            "SELECT id FROM chat_sessions WHERE id = %s AND deleted = FALSE", 
+            (session_id,), fetch=True):
+            logger.warning(f"Session not found: {session_id}")
+            return jsonify({"error": "Session not found or deleted", "error_code": "INVALID_SESSION"}), 404
+
+        # Format messages directly
         formatted_messages = [
             {
-                "role": "user" if isinstance(msg, HumanMessage) else "assistant",
-                "content": msg.content,
-                "timestamp": msg.created_at.isoformat() if hasattr(msg, 'created_at') else datetime.now().isoformat()
+                "role": msg["role"],
+                "content": msg["message"].strip(),  # Strip whitespace
+                "timestamp": msg["timestamp"].isoformat()
             }
-            for msg in history_data["messages"]
+            for msg in messages
         ]
+
         return jsonify({"messages": formatted_messages}), 200
     except Exception as e:
         logger.error(f"Chat history retrieval error: {e}")
-        if str(e) == "Session not found or deleted":
-            return jsonify({"error": "Session not found or deleted", "error_code": "INVALID_SESSION"}), 404
         return jsonify({"error": str(e), "error_code": "HISTORY_RETRIEVAL_FAILED"}), 500
+    finally:
+        if conn and conn.is_connected():
+            conn.close()
 
 @app.route('/clear_session', methods=['POST'])
 def clear_session():
@@ -1309,10 +1334,6 @@ def health_check():
     except Exception as e:
         logger.error(f"Health check error: {e}")
         return jsonify({"error": str(e), "error_code": "HEALTH_CHECK_FAILED"}), 500
-    
-@app.route('/')
-def home():
-    return {"message": "TNL Flask API running!"}
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5002)
