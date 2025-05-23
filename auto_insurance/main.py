@@ -929,8 +929,7 @@ def ask_question(user_query, schema, chat_id):
                 
                 if any(term in user_query.lower() for term in ["chart", "graph", "visual"]) and not should_viz:
                     response_text += f" {viz_reason}"
-            
-            save_chat_message(chat_id, 'user', user_query, sql_query, visualization_data)
+        
             save_chat_message(chat_id, 'assistant', response_text, sql_query, visualization_data)
             
             return {
@@ -941,7 +940,7 @@ def ask_question(user_query, schema, chat_id):
     except Exception as e:
         logging.error(f"Error in ask_question: {str(e)}")
         response_text = "I can assist only with questions that are derived from the customer dataset — such as policies, claims, coverage, and customer insights"
-        save_chat_message(chat_id, 'user', user_query)
+        
         save_chat_message(chat_id, 'assistant', response_text)
         return {"text": response_text, "visualization": None, "sql": None}
 
@@ -955,7 +954,7 @@ def ask_general_question(query, chat_id, bot_name="Aira"):
         if any(phrase in query_lower for phrase in ["what's your name", "what is your name", 
                                                     "who are you", "your name", "what should i call you"]):
             name_response = f"My name is {bot_name}! I'm your auto insurance assistant, ready to help you analyze insurance data and answer any questions you might have."
-            save_chat_message(chat_id, 'user', query)
+            
             save_chat_message(chat_id, 'assistant', name_response)
             return {"text": name_response, "visualization": None, "sql": None}
         
@@ -963,7 +962,7 @@ def ask_general_question(query, chat_id, bot_name="Aira"):
                                                    "help me with", "what do you know", "how can you help",
                                                    "what can you help with", "what are your abilities"]):
             capability_response = f"""I'm {bot_name}, here to help you gain valuable insights from your insurance customers database. You can ask about claim amounts, customer demographics, policy types, vehicle details, coverage patterns, and sales channel trends. I deliver clear, data-driven responses based on records."""
-            save_chat_message(chat_id, 'user', query)
+            
             save_chat_message(chat_id, 'assistant', capability_response)
             return {"text": capability_response, "visualization": None, "sql": None}
         
@@ -995,7 +994,7 @@ Example responses:
 Generate ONLY the greeting response, nothing else.
 """
             greeting_response = llm.invoke(greeting_prompt).content.strip()
-            save_chat_message(chat_id, 'user', query)
+            
             save_chat_message(chat_id, 'assistant', greeting_response)
             return {"text": greeting_response, "visualization": None, "sql": None}
         
@@ -1021,13 +1020,13 @@ Guidelines for your response:
 """
         response = llm.invoke(prompt)
         response_text = response.content.strip()
-        save_chat_message(chat_id, 'user', query)
+        
         save_chat_message(chat_id, 'assistant', response_text)
         return {"text": response_text, "visualization": None, "sql": None}
     except Exception as e:
         logging.error(f"Error in ask_general_question: {str(e)}")
         response_text = "I'm sorry, I couldn't process that. Could you try again?"
-        save_chat_message(chat_id, 'user', query)
+        
         save_chat_message(chat_id, 'assistant', response_text)
         return {"text": response_text, "visualization": None, "sql": None}
 
@@ -1036,7 +1035,7 @@ def classify_query(user_query, schema, chat_id):
     """Uses LLM to classify the intent of the query with context-aware logic."""
     try:
         formatted_history = format_conversation_history(chat_id)
-        
+        save_chat_message(chat_id, 'user', user_query)
         classification_prompt = f"""
 You are an intent classifier for an auto insurance chatbot.
 
@@ -1114,7 +1113,6 @@ def handle_visualization_only(user_query, chat_id):
     
     if not current_query_context.result:
         response_text = "I don't have any recent data to visualize. Please provide a data query first."
-        save_chat_message(chat_id, 'user', user_query)
         save_chat_message(chat_id, 'assistant', response_text)
         return {
             "text": response_text,
@@ -1127,7 +1125,6 @@ def handle_visualization_only(user_query, chat_id):
     
     if not chart_data or not x_axis or not y_axis:
         response_text = "The recent data doesn't have a structure I can visualize effectively. Could you try a different query that returns data with categories and numbers?"
-        save_chat_message(chat_id, 'user', user_query)
         save_chat_message(chat_id, 'assistant', response_text)
         return {
             "text": response_text,
@@ -1154,8 +1151,7 @@ def handle_visualization_only(user_query, chat_id):
         response_text = f"Here's a line chart showing how {y_axis.replace('_', ' ').title()} changes across {x_axis.replace('_', ' ').title()} values."
     else:
         response_text = f"Here's a {chart_type} chart visualization of the recent data."
-
-    save_chat_message(chat_id, 'user', user_query, current_query_context.sql, visualization_data)
+        
     save_chat_message(chat_id, 'assistant', response_text, current_query_context.sql, visualization_data)
     return {
         "text": response_text,
@@ -1167,7 +1163,7 @@ def handle_visualization_only(user_query, chat_id):
 def handle_out_of_scope(query, chat_id):
     """Handles questions that are not relevant to insurance."""
     response_text = "I can assist only with questions that are derived from the customer dataset — such as policies, claims, coverage, and customer insights"
-    save_chat_message(chat_id, 'user', query)
+    
     save_chat_message(chat_id, 'assistant', response_text)
     return {"text": response_text, "visualization": None, "sql": None}
 
