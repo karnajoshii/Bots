@@ -19,6 +19,7 @@ import logging
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 import re
+import requests
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -67,6 +68,100 @@ except Exception as e:
 
 # Global vector store
 vector_store: Optional[FAISS] = None
+
+HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")  # Add this to your .env file
+HUBSPOT_API_URL = "https://api.hubapi.com/crm/v3/objects/tickets"
+
+def create_hubspot_ticket(email, conversation_history, query,trigger_type):
+    print(conversation_history)
+    """Create a ticket in HubSpot with the conversation details."""
+    headers = {
+        "Authorization": f"Bearer {HUBSPOT_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    if trigger_type == 'frustrating' :
+        ticket_data = {
+            "properties": {
+                "subject": f"{email} : {query}",
+                "content": f"User Email: {email}\n\nConversation History:\n{conversation_history}",
+                "hs_pipeline": "0",  # Default pipeline, adjust as needed
+                "hs_pipeline_stage": "1" , # Default stage, adjust as needed
+                "hubspot_owner_id": "79298222",  # Assign to owner ID 79298222
+                "hs_ticket_priority": "URGENT" ,
+                "hs_ticket_category": "PRODUCT_ISSUE"
+            }
+        }
+    else: 
+        ticket_data = {
+            "properties": {
+                "subject": f"{email} : {query}",
+                "content": f"User Email: {email}\n\nConversation History:\n{conversation_history}",
+                "hs_pipeline": "0",  # Default pipeline, adjust as needed
+                "hs_pipeline_stage": "1" , # Default stage, adjust as needed
+                "hubspot_owner_id": "79298222",  # Assign to owner ID 79298222
+                "hs_ticket_priority": "URGENT" ,
+                "hs_ticket_category": "BILLING_ISSUE"
+            }
+        }
+    
+    try:
+        response = requests.post(HUBSPOT_API_URL, headers=headers, json=ticket_data)
+        if response.status_code == 201:
+            return True
+        else:
+            print(f"HubSpot ticket creation failed: {response.text}")
+            return False
+    except Exception as e:
+        print(f"Error creating HubSpot ticket: {str(e)}")
+        return False
+    
+@app.route('/api/create-ticket', methods=['POST'])
+def create_ticket_endpoint():
+    """
+    API endpoint to create a HubSpot ticket.
+    Expects JSON payload with 'email', 'conversation_history', and 'query'.
+    """
+    try:
+        # Get JSON data from the request
+        data = request.json
+        if not data or 'email' not in data or 'conversation_history' not in data or 'query' not in data:
+            return jsonify({
+                "status": "error",
+                "message": "Missing required fields: 'email', 'conversation_history', and 'query' are required"
+            }), 400
+        
+        email = data['email']
+        conversation_history = data['conversation_history']
+        query = data['query']
+        trigger_type = data['type']
+
+        # Validate email (optional, assuming you have is_valid_email from previous code)
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+            return jsonify({
+                "status": "error",
+                "message": "Invalid email format"
+            }), 400
+
+        # Call the function to create the ticket
+        success = create_hubspot_ticket(email, conversation_history, query,trigger_type)
+
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "Ticket created successfully in HubSpot"
+            }), 201
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Failed to create ticket in HubSpot"
+            }), 500
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"An error occurred: {str(e)}"
+        }), 500
+
 
 # Session context cache
 session_context_cache = {}
@@ -521,6 +616,43 @@ def handle_small_talks(session_id: str, query: str) -> Dict[str, str]:
         update_session_context(session_id, "small_talks", query)
         return {"response": response_text}
     
+def handle_frustration(session_id: str, query: str) -> Dict[str, str]:
+    """Handle small talk queries like 'How are you', 'Great', 'Thanks', 'Good morning' using LLM."""
+    try:
+        
+        response_text = "I’m really sorry you're facing this. I completely understand how frustrating it can be.\nLet me help by creating a support ticket so our team can review and get back to you as soon as possible."
+
+        # save_chat_message(session_id, 'user', query)
+        save_chat_message(session_id, 'assistant', response_text)
+        update_session_context(session_id, "frustration", query)
+        return {"response": response_text}
+    except Exception as e:
+        logger.error(f"Error handling frustration query: {e}")
+        response_text = "Nice to chat! How can I assist with your logistics needs?"
+        # save_chat_message(session_id, 'user', query)
+        save_chat_message(session_id, 'assistant', response_text)
+        update_session_context(session_id, "frustration", query)
+        return {"response": response_text}
+
+def handle_vip(session_id: str, query: str) -> Dict[str, str]:
+    """Handle small talk queries like 'How are you', 'Great', 'Thanks', 'Good morning' using LLM."""
+    try:
+        
+        response_text = "Thank you for your interest in shipping with us.\nI’ve flagged this as a priority inquiry. Our sales team will connect with you shortly to help you explore the best options."
+
+
+        # save_chat_message(session_id, 'user', query)
+        save_chat_message(session_id, 'assistant', response_text)
+        update_session_context(session_id, "vip", query)
+        return {"response": response_text}
+    except Exception as e:
+        logger.error(f"Error handling vip query: {e}")
+        response_text = "Nice to chat! How can I assist with your logistics needs?"
+        # save_chat_message(session_id, 'user', query)
+        save_chat_message(session_id, 'assistant', response_text)
+        update_session_context(session_id, "vip", query)
+        return {"response": response_text}
+       
 df = pd.read_csv('faqs.csv')  # Assume columns: 'question', 'answer'
 questions = df['question'].tolist()
 
@@ -561,6 +693,12 @@ def intent_classifier(query: str, session_id: str) -> str:
         - address_change: Requests to update delivery addresses, or follow-up queries providing an address after being prompted.
         - general: Greetings specifically limited to "Hi" or "Hello".
         - small_talks: Small talk queries like "How are you", "Great", "Thanks", "Good morning", or similar casual phrases, excluding "Hi" and "Hello".
+        - frustration: Messages that express annoyance, dissatisfaction, urgency, or negative sentiment about the service, order issues, delays, or unresponsiveness anything negative can be considered in frustration(e.g., "This is taking too long", "I’m really frustrated", "No one is helping me", "Terrible service"). 
+        - vip : Messages related to bulk shipments, large-value orders, or business partnership inquiries. This includes:
+        High-value intent: "I want to ship goods worth $10,000", "I plan to order for ₹1 lakh", "We want to schedule a shipment of €5,000"
+        Volume-based logistics: "We need to move 500 units", "I want to ship 100 boxes", "We’re planning a large shipment"
+        Business-oriented tone: "Our company is planning recurring shipments", "We want to onboard as a logistics partner"
+        - IMPORTANT : Bulk discounts goes in csv.
         - capabilities: Questions about the assistant's capabilities (e.g., "What can you do?").
 
         Query: {query}
@@ -578,7 +716,7 @@ def intent_classifier(query: str, session_id: str) -> str:
         - Classify queries like "How are you", "Great", "Thanks", "Good morning" as small_talks, but "Hi" or "Hello" as general.
         - Respond with only the intent string (e.g., "csv", "small_talks") and nothing else.
         - Do not include JSON, extra text, or explanations.
-        - Valid intents: csv, mysql, reschedule_delivery, address_change, general, small_talks, capabilities.
+        - Valid intents: csv, mysql, reschedule_delivery, address_change, general, small_talks, capabilities,frustration,vip.
 
         Examples:
         - Query: "How do I track my package?" -> csv
@@ -593,10 +731,12 @@ def intent_classifier(query: str, session_id: str) -> str:
         - Query: "Good morning" -> small_talks
         - Query: "Thanks" -> small_talks
         - Query: "What can you do?" -> capabilities
+        - Query: "This is taking too long" -> frustration
+        - Query: "I want to ship goods worth $10,000" -> vip
         """
     )
     
-    valid_intents = {"csv", "mysql", "reschedule_delivery", "address_change", "general", "small_talks", "capabilities"}
+    valid_intents = {"csv", "mysql", "reschedule_delivery", "address_change", "general", "small_talks", "capabilities","frustration","vip"}
     
     try:
         kwargs = {
@@ -1232,6 +1372,10 @@ def query_data():
             result = handle_capabilities_query(session_id, user_input)
         elif intent == "small_talks":
             result = handle_small_talks(session_id, user_input)
+        elif intent == "frustration":
+            result = handle_frustration(session_id, user_input)
+        elif intent == "vip":
+            result = handle_vip(session_id, user_input)
         else:
             logger.warning(f"Unknown intent: {intent}")
             result = {"response": "I'm not sure how to handle that request. Please ask about orders or logistics."}
