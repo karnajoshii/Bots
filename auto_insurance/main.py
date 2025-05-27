@@ -953,7 +953,7 @@ def ask_general_question(query, chat_id, bot_name="Aira"):
         
         if any(phrase in query_lower for phrase in ["what's your name", "what is your name", 
                                                     "who are you", "your name", "what should i call you"]):
-            name_response = f"My name is {bot_name}! I'm your auto insurance assistant, ready to help you analyze insurance data and answer any questions you might have."
+            name_response = f"My name is {bot_name}! I'm your insurance assistant, ready to help you analyze insurance data and answer any questions you might have."
             
             save_chat_message(chat_id, 'assistant', name_response)
             return {"text": name_response, "visualization": None, "sql": None}
@@ -971,7 +971,7 @@ def ask_general_question(query, chat_id, bot_name="Aira"):
         
         if is_greeting:
             greeting_prompt = f"""
-You are {bot_name}, a friendly auto insurance assistant responding to a greeting.
+You are {bot_name}, insurance assistant responding to a greeting.
 
 USER GREETING: {query}
 
@@ -988,8 +988,8 @@ Guidelines for your response:
 - Avoid sounding robotic
 
 Example responses:
-- For "Good morning": "A wonderful morning to you! I'm {bot_name}, your auto insurance assistant ready to provide insights and answer your insurance questions."
-- For "Hi there": "Hi there! I'm {bot_name}, your auto insurance assistant, ready to dive into insurance data and answer any questions you might have."
+- For "Good morning": "A wonderful morning to you! I'm {bot_name}, your insurance assistant ready to provide insights and answer your insurance questions."
+- For "Hi there": "Hi there! I'm {bot_name}, your insurance assistant, ready to dive into insurance data and answer any questions you might have."
 
 Generate ONLY the greeting response, nothing else.
 """
@@ -999,7 +999,7 @@ Generate ONLY the greeting response, nothing else.
             return {"text": greeting_response, "visualization": None, "sql": None}
         
         prompt = f"""
-You are {bot_name}, a friendly auto insurance assistant having a conversation. You specialize in explaining insurance concepts and providing helpful information.
+You are {bot_name},  insurance assistant having a conversation. You specialize in explaining insurance concepts and providing helpful information.
 
 CONVERSATION HISTORY:
 {formatted_history}
@@ -1037,7 +1037,7 @@ def classify_query(user_query, schema, chat_id):
         formatted_history = format_conversation_history(chat_id)
         save_chat_message(chat_id, 'user', user_query)
         classification_prompt = f"""
-You are an intent classifier for an auto insurance chatbot.
+You are an intent classifier for an insurance assistant.
 
 CONVERSATION HISTORY:
 {formatted_history}
