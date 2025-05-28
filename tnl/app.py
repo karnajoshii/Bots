@@ -545,6 +545,7 @@ def is_continuing_query(session_id: str, intent: str, query: str) -> bool:
         - For 'small_talks', a query continues if it responds to a previous small talk (e.g., 'Great' after 'How are you').
         - A query is new if it introduces a different intent or is unrelated to recent orders or prompts.
         - Return 'true' for continuing queries, 'false' for new queries.
+        - response must be true or false nothing else.
         """
     )
     try:
@@ -558,13 +559,27 @@ def is_continuing_query(session_id: str, intent: str, query: str) -> bool:
         )
         response = llm.invoke(final_prompt)
         print(f"RES :{response}")
-        if response.content.strip().lower() == "false":
-            with get_db_connection() as conn:
-                sql_query = """
-                    UPDATE chat_sessions SET last_order_id = NULL WHERE id = %s;
-                """
-                execute_query(conn, sql_query, (session_id,), fetch=False)
-        return response.content.strip().lower() == "true"
+        final_response = response.content.strip().lower()
+
+        conn = get_db_connection(MYSQL_QUERY_CONFIG)
+        if not conn:
+            logger.error("Database connection failed for reschedule eligibility check")
+            return {"error": "Database connection failed", "error_code": "DB_CONNECTION_FAILED"}
+        
+        print(f"MAIN : {final_response} , {type(final_response)} , {session_id},{(session_id,)}")
+        try:
+            if final_response == "false":
+                query = "UPDATE chat_sessions SET last_order_id = NULL WHERE id = %s;"
+                result = execute_query(conn, query, (session_id,), fetch=False)
+                print(f"RESULTS : {result}")
+                conn.close()
+                logger.info(f"last order is {session_id} removed")
+
+        except Exception as e:
+            logger.error(f"Error marking session as deleted: {e}")
+            return response.content.strip().lower() == "true"            
+    
+
     except Exception as e:
         logger.error(f"Error determining query type: {e}")
         return False
@@ -1173,14 +1188,22 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
         context_info = f"Order ID: {order_id}\n" if order_id else f"Email: {email}\n"
         prompt_template = ChatPromptTemplate.from_template(
             f"""
-            Current Query : {query}
-            You are a logistics assistant.
-            You need to classify that wheater the user asks for the shipment or invoice.
-            If the query is related to the invoice only than classify in 'invoice'.
-            If details of the order is asked just return shipment.
-            CRITICAL : If you are unable to find that than simply classify in the shipment.
-            Response must be shipment or invoice nothing else.
-            If not able to classify in any than simply return shipment.
+            Current Query: {query}
+            Chat History: {formatted_history}
+            Context: {context_info}
+
+            You are a logistics assistant. Classify the user's intent as either 'invoice' or 'shipment' based on the current query and chat history.
+            - If the query or history explicitly mentions 'invoice' or related terms (e.g., 'bill', 'billing', 'payment document',invoice), classify as 'invoice'.
+            - If the query or history explicitly mentions 'shipment' or related terms (e.g., 'track', 'delivery', 'status', 'order details'), classify as 'shipment'.
+            - If the query is about general order details without specific mention of 'invoice', classify as 'shipment'.
+            - If unable to determine intent or no clear mention of 'invoice' or 'shipment', default to 'shipment'.
+            - Response must be exactly 'invoice' or 'shipment' (lowercase).
+
+            Examples:
+            - Query: "ORD123", History: "I want the invoice details" -> invoice
+            - Query: "Where's my order?", History: "User asked about delivery status" -> shipment
+            - Query: "Order details", History: "" -> shipment
+
             """
         )
         try:
@@ -1193,6 +1216,7 @@ def chat_with_mysql(session_id: str, query: str, chat_history: Optional[List] = 
             response = llm.invoke(final_prompt)
             print(f"SQL QUERY : {response.content.strip()}")
             response_sql = response.content.strip()
+            print(f"SQL:{response_sql}")
             if "invoice" in response_sql:
                 return f"SELECT invoice_url FROM orders WHERE order_id = '{order_id}';"
             elif "shipment":
