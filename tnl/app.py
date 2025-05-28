@@ -1355,6 +1355,8 @@ def query_data():
         save_chat_message(session_id, 'user', user_input)
         intent = intent_classifier(user_input, session_id)
         logger.debug(f"Classified intent: {intent} for query: {user_input}")
+
+        is_continuing_query(session_id, intent, user_input)
         
         chat_history = retrieve_chat_history(session_id)["messages"]
         
